@@ -652,13 +652,10 @@
 const APP={
   menus:<%- JSON.stringify(menus) %>,
   permissions:<%- JSON.stringify(permissions) %>,
+  initialModule:<%- JSON.stringify(typeof initialModule !== 'undefined' ? initialModule : null) %>,
   user:<%- JSON.stringify(user) %>,
   catalogs:null,
-  state:{
-    view:'home',moduleKey:null,moduleName:'',menuName:'',
-    page:1,search:'',editingId:null,
-    permissionFilterPerfil:'',permissionFilterModulo:'',permissionRows:[]
-  },
+  state:{view:'home',moduleKey:null,moduleName:'',menuName:'',page:1,search:'',editingId:null,permissionFilterPerfil:'',permissionRows:[],permissionTotalPages:1},
   confirmAction:null,statusTimer:null
 };
 
@@ -734,6 +731,15 @@ const schemas={
   }
 };
 
+const moduleRoutes={
+  perfil:'/seguridad/perfil',
+  modulo:'/seguridad/modulo',
+  permisos_perfil:'/seguridad/permisos-perfil',
+  usuario:'/seguridad/usuario'
+};
+
+function getModuleUrl(mod){ return moduleRoutes[mod?.clave] || mod?.ruta || '#'; }
+
 function escapeHtml(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function escapeAttr(v){return escapeHtml(v);}
 function boolToText(v){return v?'Sí':'No';}
@@ -749,40 +755,47 @@ function renderPagination(totalPages,currentPage,callbackName){
   return html;
 }
 
-async function loadAllPermissionRows(){
-  let page=1,totalPages=1,allRows=[];
-  do{
-    const res=await fetch(`/api/permisos-perfil?page=${page}`);
-    const json=await res.json();
-    totalPages=json.totalPages||1;
-    allRows=allRows.concat(json.data||[]);
-    page++;
-  }while(page<=totalPages);
-  APP.state.permissionRows=allRows;
+async function loadPermissionRows(page=1){
+  const profileId=Number(APP.state.permissionFilterPerfil||0);
+  if(!profileId){
+    APP.state.permissionRows=[];
+    APP.state.permissionTotalPages=1;
+    APP.state.page=1;
+    return;
+  }
+  const res=await fetch(`/api/permisos-perfil?page=${page}&idPerfil=${profileId}`);
+  const json=await res.json();
+  APP.state.permissionRows=json.data||[];
+  APP.state.permissionTotalPages=json.totalPages||1;
+  APP.state.page=json.page||page;
 }
 
-function applyPermissionFilters(){
+async function applyPermissionFilters(){
   const pa=document.getElementById('permissionFilterPerfil');
-  const ma=document.getElementById('permissionFilterModulo');
-  APP.state.permissionFilterPerfil=pa?pa.value.trim().toLowerCase():'';
-  APP.state.permissionFilterModulo=ma?ma.value.trim().toLowerCase():'';
+  APP.state.permissionFilterPerfil=pa?pa.value.trim():'';
   APP.state.page=1;
+  await loadPermissionRows(1);
+  renderPermissionsTable(schemas.permisos_perfil,APP.state.permissionRows||[],APP.state.permissionTotalPages||1);
+}
+
+async function clearPermissionFilters(){
+  APP.state.permissionFilterPerfil='';
+  APP.state.page=1;
+  APP.state.permissionRows=[];
+  APP.state.permissionTotalPages=1;
+  const pa=document.getElementById('permissionFilterPerfil');
+  if(pa) pa.value='';
   renderPermissionsTable(schemas.permisos_perfil,APP.state.permissionRows||[],1);
 }
 
-function clearPermissionFilters(){
-  APP.state.permissionFilterPerfil=''; APP.state.permissionFilterModulo='';
-  APP.state.page=1;
-  const pa=document.getElementById('permissionFilterPerfil');
-  const ma=document.getElementById('permissionFilterModulo');
-  if(pa) pa.value=''; if(ma) ma.value='';
-  renderPermissionsTable(schemas.permisos_perfil,APP.state.permissionRows||[],1);
+async function loadPermissionPage(page){
+  APP.state.page=page;
+  await loadPermissionRows(page);
+  renderPermissionsTable(schemas.permisos_perfil,APP.state.permissionRows||[],APP.state.permissionTotalPages||1);
 }
-
-function loadPermissionPage(page){APP.state.page=page; renderPermissionsTable(schemas.permisos_perfil,APP.state.permissionRows||[],1);}
 
 function setBreadcrumb(){
-  const crumbs=[`<a href="javascript:void(0)" onclick="renderHome()" class="crumb-link">Inicio</a>`];
+  const crumbs=[`<a href="/dashboard" onclick="renderHome(); return false;" class="crumb-link">Inicio</a>`];
   if(APP.state.menuName) crumbs.push(`<span class="breadcrumb-sep">›</span><span>${escapeHtml(APP.state.menuName)}</span>`);
   if(APP.state.moduleName) crumbs.push(`<span class="breadcrumb-sep">›</span><span>${escapeHtml(APP.state.moduleName)}</span>`);
   if(APP.state.view==='create') crumbs.push(`<span class="breadcrumb-sep">›</span><span>Agregar</span>`);
@@ -799,30 +812,52 @@ function buildMenus(){
       return p.agregar||p.editar||p.consulta||p.eliminar||p.detalle;
     });
     if(!visible.length) return;
-    const item=document.createElement('div'); item.className='nav-item';
-    const button=document.createElement('button'); button.className='nav-link';
+
+    const item=document.createElement('div');
+    item.className='nav-item';
+
+    const button=document.createElement('button');
+    button.className='nav-link';
     button.textContent=menu.nombre;
-    const dropdown=document.createElement('div'); dropdown.className='dropdown-menu';
+
+    const dropdown=document.createElement('div');
+    dropdown.className='dropdown-menu';
+
     visible.forEach(mod=>{
-      const sub=document.createElement('button');
-      sub.className='dropdown-link'; sub.textContent=mod.nombre;
-      sub.onclick=()=>openModule(menu.nombre,mod);
-      dropdown.appendChild(sub);
+      const link=document.createElement('a');
+      link.className='dropdown-link';
+      link.textContent=mod.nombre;
+      link.href=getModuleUrl(mod);
+      dropdown.appendChild(link);
     });
-    item.appendChild(button); item.appendChild(dropdown); nav.appendChild(item);
+
+    item.append(button, dropdown);
+    nav.appendChild(item);
   });
 }
 
 async function boot(){
   const res=await fetch('/api/catalogos/base');
   APP.catalogs=await res.json();
-  // Patch user avatar
+
   const u=APP.user;
   const av=document.getElementById('topUserAvatar');
   if(av && u.strNombreUsuario) av.textContent=u.strNombreUsuario.charAt(0).toUpperCase();
   const lbl=document.getElementById('topUserLabel');
   if(lbl) lbl.textContent=`${u.strNombreUsuario} · ${u.strNombrePerfil}`;
-  buildMenus(); renderHome();
+
+  buildMenus();
+
+  if(!APP.initialModule || !APP.initialModule.moduleKey) return renderHome();
+
+  APP.state.menuName=APP.initialModule.menuName||'';
+  APP.state.moduleName=APP.initialModule.moduleName||'';
+  APP.state.moduleKey=APP.initialModule.moduleKey;
+  APP.state.view='list';
+
+  highlightNav();
+  setBreadcrumb();
+  await loadList(1);
 }
 
 function highlightNav(){
@@ -867,20 +902,40 @@ function renderHome(){
     </div>`;
 }
 
-function openModule(menuName,mod){
-  APP.state.menuName=menuName; APP.state.moduleName=mod.nombre;
-  APP.state.moduleKey=mod.clave; APP.state.page=1; APP.state.search='';
-  APP.state.editingId=null; APP.state.view='list';
-  highlightNav(); setBreadcrumb();
-  if(schemas[mod.clave]?.endpoint) loadList(); else loadStatic(mod.nombre);
+
+function renderStaticModule(){
+  highlightNav();
+  setBreadcrumb();
+  document.getElementById('moduleContent').innerHTML=`
+    <div class="module-card">
+      <div class="module-header">
+        <div>
+          <h1>${escapeHtml(APP.state.moduleName || 'Módulo')}</h1>
+          <p>Módulo del sistema.</p>
+        </div>
+      </div>
+
+      <div class="table-actions" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px;">
+        <button type="button" class="btn btn-success">+ Agregar</button>
+        <button type="button" class="btn btn-warning">Editar</button>
+        <button type="button" class="btn btn-danger">Eliminar</button>
+        <button type="button" class="btn btn-secondary">Consultar</button>
+        <button type="button" class="btn btn-primary">Detalle</button>
+      </div>
+
+      <div class="detail-box" style="line-height:1.8;min-height:74px;align-items:flex-start;padding-top:18px;">
+        Esta pantalla muestra los botones permitidos para tu perfil.
+      </div>
+    </div>`;
 }
 
 async function loadList(page=1){
   APP.state.view='list'; APP.state.page=page; APP.state.editingId=null; setBreadcrumb();
   const schema=schemas[APP.state.moduleKey];
+  if(!schema) return renderStaticModule();
   if(APP.state.moduleKey==='permisos_perfil'){
-    await loadAllPermissionRows();
-    renderPermissionsTable(schema,APP.state.permissionRows||[],1);
+    await loadPermissionRows(APP.state.page||1);
+    renderPermissionsTable(schema,APP.state.permissionRows||[],APP.state.permissionTotalPages||1);
     return;
   }
   const q=schema.search?`?page=${page}&search=${encodeURIComponent(APP.state.search||'')}`:`?page=${page}`;
@@ -942,17 +997,9 @@ function renderList(schema,rows,totalPages){
 
 function renderPermissionsTable(schema,rows,totalPages){
   const p=getPermission();
-  const perfilFilter=(APP.state.permissionFilterPerfil||'').toLowerCase();
-  const moduloFilter=(APP.state.permissionFilterModulo||'').toLowerCase();
-  const filteredRows=(rows||[]).filter(row=>{
-    return (!perfilFilter||String(row.strNombrePerfil||'').toLowerCase().includes(perfilFilter))&&
-           (!moduloFilter||String(row.strNombreModulo||'').toLowerCase().includes(moduloFilter));
-  });
-  const pageSize=5;
-  const localTotalPages=Math.max(1,Math.ceil(filteredRows.length/pageSize));
-  if(APP.state.page>localTotalPages) APP.state.page=localTotalPages;
-  const start=(APP.state.page-1)*pageSize;
-  const paginatedRows=filteredRows.slice(start,start+pageSize);
+  const profileId=Number(APP.state.permissionFilterPerfil||0);
+  const profileOptions=(APP.catalogs?.perfiles||[]).map(perfil=>`<option value="${perfil.id}" ${String(perfil.id)===String(profileId)?'selected':''}>${escapeHtml(perfil.strNombrePerfil)}</option>`).join('');
+  const selectedProfile=(APP.catalogs?.perfiles||[]).find(perfil=>String(perfil.id)===String(profileId));
 
   document.getElementById('moduleContent').innerHTML=`
     <div class="module-card">
@@ -961,54 +1008,84 @@ function renderPermissionsTable(schema,rows,totalPages){
           <h1>${escapeHtml(schema.title)}</h1>
           <p>${escapeHtml(schema.description)}</p>
         </div>
-        <div class="table-actions">
-          ${p.agregar?`<button class="btn btn-success" onclick="openCreateForm()">+ Agregar</button>`:''}
-        </div>
       </div>
       <div class="filter-box">
         <div class="filter-grid">
-          <div class="field">
-            <label>Perfil</label>
-            <input id="permissionFilterPerfil" type="text" placeholder="Filtrar por perfil..." value="${escapeHtml(APP.state.permissionFilterPerfil||'')}">
-          </div>
-          <div class="field">
-            <label>Módulo</label>
-            <input id="permissionFilterModulo" type="text" placeholder="Filtrar por módulo..." value="${escapeHtml(APP.state.permissionFilterModulo||'')}">
+          <div class="field" style="max-width:560px;flex:0 0 560px;">
+            <label>Filtrar por perfil</label>
+            <select id="permissionFilterPerfil" onchange="applyPermissionFilters()">
+              <option value="">— Todos los perfiles —</option>
+              ${profileOptions}
+            </select>
           </div>
           <div class="actions-inline" style="align-self:flex-end">
-            <button class="btn btn-success" onclick="applyPermissionFilters()">Buscar</button>
-            <button class="btn btn-secondary" onclick="clearPermissionFilters()">Limpiar</button>
+            <button class="btn btn-secondary" type="button" onclick="clearPermissionFilters()">Limpiar</button>
           </div>
+          ${selectedProfile?`<div class="badge" style="height:42px;align-self:flex-end;display:inline-flex;">Perfil: ${escapeHtml(selectedProfile.strNombrePerfil)}</div>`:''}
         </div>
       </div>
-      <div class="table-tools">Permisos configurados</div>
-      <div class="table-responsive">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Perfil</th><th>Módulo</th>
-              <th>Agregar</th><th>Editar</th><th>Consultar</th><th>Eliminar</th><th>Detalle</th>
-              <th>Guardar</th><th>Ver</th><th>Eliminar</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${paginatedRows.length?paginatedRows.map(row=>`
+
+      ${!profileId?`
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
               <tr>
-                <td>${escapeHtml(row.strNombrePerfil)}</td>
-                <td>${escapeHtml(row.strNombreModulo)}</td>
-                <td><input class="perm-check" type="checkbox" data-field="bitAgregar" ${row.bitAgregar?'checked':''}></td>
-                <td><input class="perm-check" type="checkbox" data-field="bitEditar" ${row.bitEditar?'checked':''}></td>
-                <td><input class="perm-check" type="checkbox" data-field="bitConsulta" ${row.bitConsulta?'checked':''}></td>
-                <td><input class="perm-check" type="checkbox" data-field="bitEliminar" ${row.bitEliminar?'checked':''}></td>
-                <td><input class="perm-check" type="checkbox" data-field="bitDetalle" ${row.bitDetalle?'checked':''}></td>
-                <td>${p.editar?`<button class="btn btn-success perm-save" onclick="savePermissionRow(this,${row.id},${row.idPerfil},${row.idModulo})">Guardar</button>`:''}</td>
-                <td>${p.detalle?`<button class="btn btn-primary" onclick="viewRecord(${row.id})">Ver</button>`:''}</td>
-                <td>${p.eliminar?`<button class="btn btn-danger" onclick="confirmDelete(${row.id})">Eliminar</button>`:''}</td>
-              </tr>`).join(''):`<tr><td colspan="10"><div class="empty">No hay registros para mostrar</div></td></tr>`}
-          </tbody>
-        </table>
-      </div>
-      <div class="pagination">${renderPagination(localTotalPages,APP.state.page,'loadPermissionPage')}</div>
+                <th>#</th>
+                <th>Módulo</th>
+                <th>Agregar</th>
+                <th>Editar</th>
+                <th>Consulta</th>
+                <th>Eliminar</th>
+                <th>Detalle</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td colspan="8">
+                  <div class="empty" style="padding:60px 24px;">Selecciona un perfil para ver y editar sus permisos</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>`:`
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Módulo</th>
+                <th>Agregar</th>
+                <th>Editar</th>
+                <th>Consulta</th>
+                <th>Eliminar</th>
+                <th>Detalle</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(rows||[]).length?(rows||[]).map((row,index)=>`
+                <tr>
+                  <td>${((APP.state.page-1)*5)+(index+1)}</td>
+                  <td>${escapeHtml(row.strNombreModulo)}</td>
+                  <td><input class="perm-check" type="checkbox" data-field="bitAgregar" ${row.bitAgregar?'checked':''}></td>
+                  <td><input class="perm-check" type="checkbox" data-field="bitEditar" ${row.bitEditar?'checked':''}></td>
+                  <td><input class="perm-check" type="checkbox" data-field="bitConsulta" ${row.bitConsulta?'checked':''}></td>
+                  <td><input class="perm-check" type="checkbox" data-field="bitEliminar" ${row.bitEliminar?'checked':''}></td>
+                  <td><input class="perm-check" type="checkbox" data-field="bitDetalle" ${row.bitDetalle?'checked':''}></td>
+                  <td>
+                    <div class="table-actions">
+                      ${p.editar?`<button class="btn btn-success perm-save" onclick="savePermissionRow(this,${row.id||0},${row.idPerfil},${row.idModulo})">Guardar</button>`:''}
+                      ${p.detalle?`<button class="btn btn-primary" onclick="viewPermissionRecord(' ${encodeURIComponent(JSON.stringify({id:row.id||0,idPerfil:row.idPerfil,idModulo:row.idModulo,strNombrePerfil:row.strNombrePerfil,strNombreModulo:row.strNombreModulo,bitAgregar:!!row.bitAgregar,bitEditar:!!row.bitEditar,bitConsulta:!!row.bitConsulta,bitEliminar:!!row.bitEliminar,bitDetalle:!!row.bitDetalle}))} '.trim())">Ver</button>`:''}
+                      ${p.eliminar?`<button class="btn btn-danger" ${row.id?`onclick="confirmPermissionDelete(${row.id})"`:'disabled'}>Eliminar</button>`:''}
+                    </div>
+                  </td>
+                </tr>`).join(''):`<tr><td colspan="8"><div class="empty">No hay módulos para mostrar</div></td></tr>`}
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination">${renderPagination(totalPages,APP.state.page,'loadPermissionPage')}</div>
+      `}
     </div>`;
 }
 
@@ -1138,10 +1215,42 @@ async function savePermissionRow(button,rowId,idPerfil,idModulo){
     bitEliminar:tr.querySelector('[data-field="bitEliminar"]').checked,
     bitDetalle:tr.querySelector('[data-field="bitDetalle"]').checked
   };
-  const res=await fetch(`/api/permisos-perfil/${rowId}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const res=await fetch(`/api/permisos-perfil/${rowId||0}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const json=await res.json();
   if(!res.ok||!json.ok){ alert(json.message||'No se pudo guardar'); return; }
   showStatusModal('¡Guardado!','Los permisos se actualizaron correctamente.');
+  await loadPermissionRows(APP.state.page||1);
+  renderPermissionsTable(schemas.permisos_perfil,APP.state.permissionRows||[],APP.state.permissionTotalPages||1);
+}
+
+function viewPermissionRecord(encodedRow){
+  const data=JSON.parse(decodeURIComponent(encodedRow));
+  const html=`
+    <div class="detail-grid">
+      <div class="field"><label>Perfil</label><div class="detail-box">${escapeHtml(data.strNombrePerfil||'')}</div></div>
+      <div class="field"><label>Módulo</label><div class="detail-box">${escapeHtml(data.strNombreModulo||'')}</div></div>
+      <div class="field"><label>Agregar</label><div class="detail-box">${boolToText(!!data.bitAgregar)}</div></div>
+      <div class="field"><label>Editar</label><div class="detail-box">${boolToText(!!data.bitEditar)}</div></div>
+      <div class="field"><label>Consulta</label><div class="detail-box">${boolToText(!!data.bitConsulta)}</div></div>
+      <div class="field"><label>Eliminar</label><div class="detail-box">${boolToText(!!data.bitEliminar)}</div></div>
+      <div class="field"><label>Detalle</label><div class="detail-box">${boolToText(!!data.bitDetalle)}</div></div>
+    </div>
+    <div class="modal-actions" style="justify-content:flex-end;margin-top:22px">
+      <button type="button" class="btn btn-secondary" onclick="closeDetailModal()">Cerrar</button>
+    </div>`;
+  openDetailModal('Detalle de permiso',html);
+}
+
+function confirmPermissionDelete(id){
+  openConfirmModal('Confirmar eliminación','¿Deseas eliminar este registro de permisos del perfil seleccionado?',async()=>{
+    const res=await fetch(`/api/permisos-perfil/${id}`,{method:'DELETE'});
+    const json=await res.json();
+    if(!res.ok||!json.ok){ alert(json.message||'No se pudo eliminar'); return; }
+    closeConfirmModal();
+    showStatusModal('Eliminado','El permiso se eliminó correctamente.');
+    await loadPermissionRows(APP.state.page||1);
+    renderPermissionsTable(schemas.permisos_perfil,APP.state.permissionRows||[],APP.state.permissionTotalPages||1);
+  });
 }
 
 function normalizeDetailValue(key,value){
@@ -1183,162 +1292,6 @@ function confirmDelete(id){
   });
 }
 
-const staticData={
-  principal1:{
-    title:'Principal 1',
-    description:'Catálogo de productos registrados en el sistema.',
-    columns:['#','Nombre','Categoría','Precio','Stock','Estado'],
-    rows:[
-      [1,'Monitor LG UltraWide 34"','Electrónica','$8,499','12','Activo'],
-      [2,'Teclado Mecánico Corsair K95','Periféricos','$3,200','27','Activo'],
-      [3,'Mouse Logitech MX Master 3','Periféricos','$1,850','34','Activo'],
-      [4,'Silla Ergonómica Herman Miller','Mobiliario','$24,000','5','Activo'],
-      [5,'Laptop Dell XPS 15','Computadoras','$42,500','8','Activo'],
-      [6,'Auriculares Sony WH-1000XM5','Audio','$7,300','19','Activo'],
-      [7,'Webcam Logitech C920','Periféricos','$1,490','41','Inactivo'],
-      [8,'Disco SSD Samsung 1TB','Almacenamiento','$2,100','53','Activo'],
-      [9,'Hub USB-C Anker 7-en-1','Accesorios','$890','68','Activo'],
-      [10,'Impresora HP LaserJet Pro','Impresión','$5,600','6','Inactivo'],
-      [11,'Router ASUS AX6000','Redes','$4,750','14','Activo'],
-      [12,'Tableta Wacom Intuos','Diseño','$3,900','9','Activo'],
-    ]
-  },
-  principal2:{
-    title:'Principal 2',
-    description:'Registro de proveedores y contactos del sistema.',
-    columns:['#','Proveedor','Contacto','Correo','Teléfono','Ciudad'],
-    rows:[
-      [1,'TechSupply MX','Carlos Ramírez','c.ramirez@techsupply.mx','55 1234 5678','Ciudad de México'],
-      [2,'Distribuidora Norte','Ana Flores','a.flores@distnorte.com','81 9876 5432','Monterrey'],
-      [3,'GlobalTech SA','Miguel Torres','m.torres@globaltech.com','33 4567 8901','Guadalajara'],
-      [4,'OfficeWorld','Laura Sánchez','l.sanchez@officeworld.mx','55 2345 6789','Ciudad de México'],
-      [5,'Electro Mayoreo','Pedro López','p.lopez@electromayoreo.com','81 3456 7890','Monterrey'],
-      [6,'CompuServicios','Isabel Vega','i.vega@compuservicios.mx','33 5678 9012','Guadalajara'],
-      [7,'InnovateTech','Roberto Díaz','r.diaz@innovatetech.com','55 6789 0123','Ciudad de México'],
-      [8,'MegaStore Digital','Patricia Mora','p.mora@megastore.mx','664 7890 1234','Tijuana'],
-      [9,'SurTech Puebla','Andrés Cruz','a.cruz@surtech.mx','222 8901 2345','Puebla'],
-      [10,'ProEquipos Leon','Sandra Reyes','s.reyes@proequipos.com','477 9012 3456','León'],
-    ]
-  }
-};
-
-const staticState={search:'',page:1,pageSize:5};
-
-function renderStaticTable(key){
-  const data=staticData[key];
-  if(!data){ renderHome(); return; }
-
-  const query=staticState.search.toLowerCase();
-  const filtered=data.rows.filter(row=>
-    row.some(cell=>String(cell).toLowerCase().includes(query))
-  );
-
-  const totalPages=Math.max(1,Math.ceil(filtered.length/staticState.pageSize));
-  if(staticState.page>totalPages) staticState.page=totalPages;
-  const start=(staticState.page-1)*staticState.pageSize;
-  const paged=filtered.slice(start,start+staticState.pageSize);
-
-  const pageButtons=()=>{
-    if(totalPages<=1) return '';
-    let b=`<button ${staticState.page===1?'disabled':''} onclick="staticChangePage(${staticState.page-1},'${key}')">‹</button>`;
-    for(let i=1;i<=totalPages;i++) b+=`<button class="${i===staticState.page?'active':''}" onclick="staticChangePage(${i},'${key}')">${i}</button>`;
-    b+=`<button ${staticState.page===totalPages?'disabled':''} onclick="staticChangePage(${staticState.page+1},'${key}')">›</button>`;
-    return b;
-  };
-
-  document.getElementById('moduleContent').innerHTML=`
-    <div class="module-card">
-      <div class="module-header">
-        <div>
-          <h1>${escapeHtml(data.title)}</h1>
-          <p>${escapeHtml(data.description)}</p>
-        </div>
-        <div class="table-actions">
-          <button class="btn btn-success">+ Agregar</button>
-        </div>
-      </div>
-      <div class="filter-box">
-        <div class="filter-grid">
-          <div class="field">
-            <label>Buscar</label>
-            <input id="staticSearchBox" type="text" placeholder="Buscar en la tabla..." value="${escapeHtml(staticState.search)}">
-          </div>
-          <div class="actions-inline" style="align-self:flex-end">
-            <button class="btn btn-success" onclick="staticApplySearch('${key}')">Buscar</button>
-            <button class="btn btn-secondary" onclick="staticClearSearch('${key}')">Limpiar</button>
-          </div>
-        </div>
-      </div>
-      <div class="table-tools">Mostrando ${filtered.length} registro${filtered.length!==1?'s':''}</div>
-      <div class="table-responsive">
-        <table class="data-table">
-          <thead>
-            <tr>
-              ${data.columns.map(c=>`<th>${escapeHtml(c)}</th>`).join('')}
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${paged.length?paged.map(row=>`
-              <tr>
-                ${row.map(cell=>`<td>${escapeHtml(String(cell))}</td>`).join('')}
-                <td>
-                  <div class="actions-inline">
-                    <button class="btn btn-warning" style="padding:7px 12px">Editar</button>
-                    <button class="btn btn-danger" style="padding:7px 12px">Eliminar</button>
-                  </div>
-                </td>
-              </tr>`).join(''):`<tr><td colspan="${data.columns.length+1}"><div class="empty">No hay registros para mostrar</div></td></tr>`}
-          </tbody>
-        </table>
-      </div>
-      <div class="pagination">${pageButtons()}</div>
-    </div>`;
-}
-
-function staticApplySearch(key){
-  const input=document.getElementById('staticSearchBox');
-  staticState.search=input?input.value.trim():'';
-  staticState.page=1;
-  renderStaticTable(key);
-}
-
-function staticClearSearch(key){
-  staticState.search=''; staticState.page=1;
-  const input=document.getElementById('staticSearchBox');
-  if(input) input.value='';
-  renderStaticTable(key);
-}
-
-function staticChangePage(page,key){
-  staticState.page=page;
-  renderStaticTable(key);
-}
-
-async function loadStatic(moduleName){
-  staticState.search=''; staticState.page=1;
-  const key=APP.state.moduleKey;
-  if(staticData[key]){ renderStaticTable(key); return; }
-
-  // fallback original
-  const res=await fetch(`/api/static/${key}`);
-  const json=await res.json();
-  const a=json.actions||{};
-  document.getElementById('moduleContent').innerHTML=`
-    <div class="module-card">
-      <div class="module-header">
-        <div><h1>${escapeHtml(moduleName)}</h1><p>Módulo del sistema.</p></div>
-      </div>
-      <div class="crud-actions">
-        ${a.agregar?'<button class="btn btn-success">+ Agregar</button>':''}
-        ${a.editar?'<button class="btn btn-warning">Editar</button>':''}
-        ${a.eliminar?'<button class="btn btn-danger">Eliminar</button>':''}
-        ${a.consulta?'<button class="btn btn-secondary">Consultar</button>':''}
-        ${a.detalle?'<button class="btn btn-primary">Detalle</button>':''}
-      </div>
-      <div class="filter-box" style="margin-top:18px"><p>Esta pantalla muestra los botones permitidos para tu perfil.</p></div>
-    </div>`;
-}
 
 function openDetailModal(title,html){
   document.getElementById('detailModalTitle').textContent=title;

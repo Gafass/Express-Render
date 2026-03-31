@@ -15,6 +15,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/', require('./routes/auth.routes'));
 app.use('/', require('./routes/ftp.routes'));
+app.use('/', require('./routes/seguridad.routes'));
+app.use('/', require('./routes/static.routes'));
 app.use('/', require('./routes/crud.routes'));
 
 app.use((req, res) => {
