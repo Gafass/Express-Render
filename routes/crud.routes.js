@@ -47,6 +47,8 @@ router.get('/api/static/:moduleKey', (req, res) => {
 });
 
 function boolBody(v) { return v === true || v === 'true' || v === 1 || v === '1' || v === 'on'; }
+function onlyDigits(value = '') { return String(value || '').replace(/\D/g, ''); }
+function isValidPhone(value = '') { return /^\d{10}$/.test(onlyDigits(value)); }
 
 router.get('/api/perfiles', requireModuleAccess('perfil', 'consulta'), async (req, res, next) => {
   try {
@@ -193,8 +195,54 @@ router.get('/api/usuarios', requireModuleAccess('usuario', 'consulta'), async (r
   } catch (error) { next(error); }
 });
 router.get('/api/usuarios/:id', requireModuleAccess('usuario', 'detalle'), async (req, res, next) => { try { const connection = await pool; const result = await connection.request().input('id', sql.Int, req.params.id).query('SELECT id, strNombreUsuario, idPerfil, strPwd, idEstadoUsuario, strCorreo, strNumeroCelular, strImagen FROM Usuario WHERE id = @id'); res.json({ ok: true, data: result.recordset[0] || null }); } catch (error) { next(error); } });
-router.post('/api/usuarios', requireModuleAccess('usuario', 'agregar'), upload.single('strImagen'), async (req, res, next) => { try { const strImagen = req.file ? `/uploads/users/${req.file.filename}` : null; const connection = await pool; await connection.request().input('strNombreUsuario', sql.VarChar(80), req.body.strNombreUsuario).input('idPerfil', sql.Int, req.body.idPerfil).input('strPwd', sql.VarChar(120), req.body.strPwd).input('idEstadoUsuario', sql.Int, req.body.idEstadoUsuario).input('strCorreo', sql.VarChar(120), req.body.strCorreo).input('strNumeroCelular', sql.VarChar(20), req.body.strNumeroCelular).input('strImagen', sql.VarChar(255), strImagen).query('INSERT INTO Usuario (strNombreUsuario, idPerfil, strPwd, idEstadoUsuario, strCorreo, strNumeroCelular, strImagen) VALUES (@strNombreUsuario, @idPerfil, @strPwd, @idEstadoUsuario, @strCorreo, @strNumeroCelular, @strImagen)'); res.json({ ok: true }); } catch (error) { next(error); } });
-router.put('/api/usuarios/:id', requireModuleAccess('usuario', 'editar'), upload.single('strImagen'), async (req, res, next) => { try { const connection = await pool; let strImagen = null; if (req.file) { strImagen = `/uploads/users/${req.file.filename}`; } else { const oldData = await connection.request().input('id', sql.Int, req.params.id).query('SELECT strImagen FROM Usuario WHERE id = @id'); strImagen = oldData.recordset[0]?.strImagen || null; } await connection.request().input('id', sql.Int, req.params.id).input('strNombreUsuario', sql.VarChar(80), req.body.strNombreUsuario).input('idPerfil', sql.Int, req.body.idPerfil).input('strPwd', sql.VarChar(120), req.body.strPwd).input('idEstadoUsuario', sql.Int, req.body.idEstadoUsuario).input('strCorreo', sql.VarChar(120), req.body.strCorreo).input('strNumeroCelular', sql.VarChar(20), req.body.strNumeroCelular).input('strImagen', sql.VarChar(255), strImagen).query('UPDATE Usuario SET strNombreUsuario=@strNombreUsuario, idPerfil=@idPerfil, strPwd=@strPwd, idEstadoUsuario=@idEstadoUsuario, strCorreo=@strCorreo, strNumeroCelular=@strNumeroCelular, strImagen=@strImagen WHERE id=@id'); res.json({ ok: true }); } catch (error) { next(error); } });
+router.post('/api/usuarios', requireModuleAccess('usuario', 'agregar'), upload.single('strImagen'), async (req, res, next) => {
+  try {
+    const telefono = onlyDigits(req.body.strNumeroCelular);
+    if (!isValidPhone(telefono)) {
+      return res.status(400).json({ ok: false, message: 'El número de teléfono debe tener exactamente 10 dígitos.' });
+    }
+
+    const strImagen = req.file ? `/uploads/users/${req.file.filename}` : null;
+    const connection = await pool;
+    await connection.request()
+      .input('strNombreUsuario', sql.VarChar(80), req.body.strNombreUsuario)
+      .input('idPerfil', sql.Int, req.body.idPerfil)
+      .input('strPwd', sql.VarChar(120), req.body.strPwd)
+      .input('idEstadoUsuario', sql.Int, req.body.idEstadoUsuario)
+      .input('strCorreo', sql.VarChar(120), req.body.strCorreo)
+      .input('strNumeroCelular', sql.VarChar(10), telefono)
+      .input('strImagen', sql.VarChar(255), strImagen)
+      .query('INSERT INTO Usuario (strNombreUsuario, idPerfil, strPwd, idEstadoUsuario, strCorreo, strNumeroCelular, strImagen) VALUES (@strNombreUsuario, @idPerfil, @strPwd, @idEstadoUsuario, @strCorreo, @strNumeroCelular, @strImagen)');
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+router.put('/api/usuarios/:id', requireModuleAccess('usuario', 'editar'), upload.single('strImagen'), async (req, res, next) => {
+  try {
+    const telefono = onlyDigits(req.body.strNumeroCelular);
+    if (!isValidPhone(telefono)) {
+      return res.status(400).json({ ok: false, message: 'El número de teléfono debe tener exactamente 10 dígitos.' });
+    }
+
+    const connection = await pool;
+    let strImagen = null;
+    if (req.file) { strImagen = `/uploads/users/${req.file.filename}`; }
+    else {
+      const oldData = await connection.request().input('id', sql.Int, req.params.id).query('SELECT strImagen FROM Usuario WHERE id = @id');
+      strImagen = oldData.recordset[0]?.strImagen || null;
+    }
+    await connection.request()
+      .input('id', sql.Int, req.params.id)
+      .input('strNombreUsuario', sql.VarChar(80), req.body.strNombreUsuario)
+      .input('idPerfil', sql.Int, req.body.idPerfil)
+      .input('strPwd', sql.VarChar(120), req.body.strPwd)
+      .input('idEstadoUsuario', sql.Int, req.body.idEstadoUsuario)
+      .input('strCorreo', sql.VarChar(120), req.body.strCorreo)
+      .input('strNumeroCelular', sql.VarChar(10), telefono)
+      .input('strImagen', sql.VarChar(255), strImagen)
+      .query('UPDATE Usuario SET strNombreUsuario=@strNombreUsuario, idPerfil=@idPerfil, strPwd=@strPwd, idEstadoUsuario=@idEstadoUsuario, strCorreo=@strCorreo, strNumeroCelular=@strNumeroCelular, strImagen=@strImagen WHERE id=@id');
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
 router.delete('/api/usuarios/:id', requireModuleAccess('usuario', 'eliminar'), async (req, res, next) => { try { const connection = await pool; await connection.request().input('id', sql.Int, req.params.id).query('DELETE FROM Usuario WHERE id = @id'); res.json({ ok: true }); } catch (error) { next(error); } });
 
 module.exports = router;
