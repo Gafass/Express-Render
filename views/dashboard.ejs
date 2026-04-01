@@ -1185,48 +1185,70 @@ function renderField(field,data,schema){
 
 async function saveRecord(e){
   e.preventDefault();
+
   const schema=schemas[APP.state.moduleKey];
-  const id=e.target.querySelector('[name="id"]').value;
+  const form=e.target;
+  const id=form.querySelector('[name="id"]').value;
   const hasFile=schema.form.some(f=>f.type==='file');
   const method=id?'PUT':'POST';
   let options={method};
 
-  if(hasFile){
-    const fd=new FormData(e.target); fd.delete('id');
-    schema.form.forEach(field=>{ if(field.type==='checkbox') fd.set(field.name,fd.get(field.name)?'true':'false'); });
-    options.body=fd;
-  } else {
-    const payload={};
-    schema.form.forEach(field=>{
-      const el=e.target.querySelector(`[name="${field.name}"]`);
-      if(!el) return;
-      payload[field.name]=field.type==='checkbox'?el.checked:el.value;
-    });
-    if(APP.state.moduleKey==='permisos_perfil'){
-      payload.bitAgregar=false; payload.bitEditar=false;
-      payload.bitConsulta=false; payload.bitEliminar=false; payload.bitDetalle=false;
-    }
-    options.headers={'Content-Type':'application/json'};
-    options.body=JSON.stringify(payload);
-  }
-
   if(APP.state.moduleKey==='usuario'){
-    const phoneInput=e.target.querySelector('[name="strNumeroCelular"]');
+    const phoneInput=form.querySelector('[name="strNumeroCelular"]');
     const phone=(phoneInput?.value || '').trim();
-    if(!/^\\d{10}$/.test(phone)){
+
+    if(!/^\d{10}$/.test(phone)){
       alert('El número de teléfono debe tener exactamente 10 dígitos.');
       if(phoneInput) phoneInput.focus();
       return;
     }
   }
 
+  if(hasFile){
+    const fd=new FormData(form);
+    fd.delete('id');
+
+    schema.form.forEach(field=>{
+      if(field.type==='checkbox'){
+        fd.set(field.name,fd.get(field.name)?'true':'false');
+      }
+    });
+
+    options.body=fd;
+  } else {
+    const payload={};
+
+    schema.form.forEach(field=>{
+      const el=form.querySelector(`[name="${field.name}"]`);
+      if(!el) return;
+      payload[field.name]=field.type==='checkbox'?el.checked:el.value;
+    });
+
+    if(APP.state.moduleKey==='permisos_perfil'){
+      payload.bitAgregar=false;
+      payload.bitEditar=false;
+      payload.bitConsulta=false;
+      payload.bitEliminar=false;
+      payload.bitDetalle=false;
+    }
+
+    options.headers={'Content-Type':'application/json'};
+    options.body=JSON.stringify(payload);
+  }
+
   const res=await fetch(id?`${schema.endpoint}/${id}`:schema.endpoint,options);
   const json=await res.json();
-  if(!res.ok||!json.ok){ alert(json.message||'No se pudo guardar'); return; }
+
+  if(!res.ok||!json.ok){
+    alert(json.message||'No se pudo guardar');
+    return;
+  }
+
   if(APP.state.moduleKey==='perfil'){
     const catRes=await fetch('/api/catalogos/base');
     APP.catalogs=await catRes.json();
   }
+
   showStatusModal('¡Guardado!',id?'El registro se actualizó correctamente.':'El registro se creó correctamente.');
   loadList(id?APP.state.page:1);
 }
